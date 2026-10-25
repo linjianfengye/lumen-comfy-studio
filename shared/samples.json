@@ -1,0 +1,180 @@
+{
+  "sdxl": {
+    "last_node_id": 9,
+    "nodes": [
+      {
+        "id": 4,
+        "type": "CheckpointLoaderSimple",
+        "widgets_values": [
+          "sd_xl_base_1.0.safetensors"
+        ]
+      },
+      {
+        "id": 10,
+        "type": "LoraLoader",
+        "widgets_values": [
+          "film_grain_sdxl.safetensors",
+          0.8,
+          0.8
+        ],
+        "properties": {
+          "cnr_id": "comfy-core"
+        }
+      },
+      {
+        "id": 6,
+        "type": "CLIPTextEncode",
+        "title": "正向提示词",
+        "widgets_values": [
+          "misty alpine lake at dawn, cinematic, film grain"
+        ]
+      },
+      {
+        "id": 7,
+        "type": "CLIPTextEncode",
+        "title": "反向提示词",
+        "widgets_values": [
+          "blurry, lowres, watermark"
+        ]
+      },
+      {
+        "id": 5,
+        "type": "EmptyLatentImage",
+        "widgets_values": [
+          1024,
+          1024,
+          1
+        ]
+      },
+      {
+        "id": 3,
+        "type": "KSampler",
+        "widgets_values": [
+          156680208700286,
+          "randomize",
+          28,
+          6.5,
+          "dpmpp_2m",
+          "karras",
+          1
+        ]
+      },
+      {
+        "id": 8,
+        "type": "VAEDecode",
+        "widgets_values": []
+      },
+      {
+        "id": 11,
+        "type": "UpscaleModelLoader",
+        "widgets_values": [
+          "4x-UltraSharp.pth"
+        ]
+      },
+      {
+        "id": 12,
+        "type": "FaceDetailer",
+        "widgets_values": [],
+        "properties": {
+          "cnr_id": "comfyui-impact-pack"
+        }
+      },
+      {
+        "id": 9,
+        "type": "SaveImage",
+        "widgets_values": [
+          "lumen"
+        ]
+      }
+    ],
+    "links": []
+  },
+  "wanVideo": {
+    "3": {
+      "class_type": "KSampler",
+      "inputs": {
+        "seed": 82628696717253,
+        "steps": 30,
+        "cfg": 6,
+        "sampler_name": "uni_pc",
+        "scheduler": "simple",
+        "denoise": 1
+      }
+    },
+    "6": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "a paper boat drifting on a calm lake",
+        "clip": [
+          "38",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "正向提示词"
+      }
+    },
+    "7": {
+      "class_type": "CLIPTextEncode",
+      "inputs": {
+        "text": "low quality, static",
+        "clip": [
+          "38",
+          0
+        ]
+      },
+      "_meta": {
+        "title": "反向提示词"
+      }
+    },
+    "8": {
+      "class_type": "VAEDecode",
+      "inputs": {
+        "samples": [
+          "3",
+          0
+        ],
+        "vae": [
+          "39",
+          0
+        ]
+      }
+    },
+    "28": {
+      "class_type": "SaveAnimatedWEBP",
+      "inputs": {
+        "filename_prefix": "lumen_video",
+        "fps": 16
+      }
+    },
+    "37": {
+      "class_type": "UNETLoader",
+      "inputs": {
+        "unet_name": "wan2.1_t2v_1.3B_fp16.safetensors",
+        "weight_dtype": "default"
+      }
+    },
+    "38": {
+      "class_type": "CLIPLoader",
+      "inputs": {
+        "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+        "type": "wan"
+      }
+    },
+    "39": {
+      "class_type": "VAELoader",
+      "inputs": {
+        "vae_name": "wan_2.1_vae.safetensors"
+      }
+    },
+    "40": {
+      "class_type": "EmptyHunyuanLatentVideo",
+      "inputs": {
+        "width": 832,
+        "height": 480,
+        "length": 33,
+        "batch_size": 1
+      }
+    }
+  }
+}

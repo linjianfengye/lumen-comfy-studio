@@ -1,0 +1,22 @@
+{
+  "name": "lumen-comfy-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5180",
+    "build": "vite build",
+    "preview": "vite preview --port 5180",
+    "mock:comfy": "node tools/mock-comfyui.mjs",
+    "server": "cd server && .venv\\Scripts\\python -m lumen",
+    "test:server": "cd server && .venv\\Scripts\\python -m pytest -q"
+  },
+  "dependencies": {
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.4",
+    "vite": "^7.1.9"
+  }
+}
