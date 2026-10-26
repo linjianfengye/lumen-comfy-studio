@@ -11,12 +11,14 @@ import uuid
 
 from . import config as C
 from .adapters import AdapterError, make_adapter
-from .adapters.modal_app import ModalAdapter
+from .adapters.bridge import OBJINFO_KEY, OFFLINE_AFTER, BridgeAdapter
+from .adapters.modal_app import PACK_RE, ModalAdapter
 from .scheduler import SchedulerMixin
 from .store import MASK, Store
 from .workflow import basename, parse
 
 FAST_GPU = re.compile(r"H100|A100|A800|L40S|4090")
+LOCAL_PUBLIC_MSG = "在线版由浏览器直连你电脑上的 ComfyUI，服务器不会访问本机地址；请在连接窗口里点「保存并连接」"
 now_ms = lambda: int(time.time() * 1000)
 
 
@@ -32,6 +34,8 @@ class Engine(SchedulerMixin):
         self.notices = collections.deque(maxlen=50)
         self.notice_seq = 0
         self._loop_task = None
+        self.bridge = {}          # 浏览器直连本机 ComfyUI 的待领取任务
+        self.bridge_seen = 0.0    # 网页最近一次轮询的时间
 
     # ---------- 基础 ----------
     @property
@@ -54,7 +58,11 @@ class Engine(SchedulerMixin):
 
     def adapter(self, pid):
         if pid not in self.adapters:
-            self.adapters[pid] = make_adapter(pid, self.store.provider(pid))
+            p = self.store.provider(pid)
+            ad = BridgeAdapter(pid, p) if self.is_bridge(pid) else make_adapter(pid, p)
+            ad.deploy_dir = self.store.deploy
+            ad.engine = self
+            self.adapters[pid] = ad
         return self.adapters[pid]
 
     def reset_adapter(self, pid):
@@ -66,6 +74,60 @@ class Engine(SchedulerMixin):
         p = self.store.provider(pid)
         return p["connected"] and p["comfy"]["status"] == "ready"
 
+    # ---------- 浏览器直连本机 ComfyUI ----------
+    def is_bridge(self, pid) -> bool:
+        p = self.store.provider(pid)
+        return pid == "local" and not p["demo"] and bool(p["comfy"].get("bridge"))
+
+    def bridge_online(self) -> bool:
+        return time.monotonic() - self.bridge_seen < OFFLINE_AFTER
+
+    def bridge_connect(self, endpoint: str, stats: dict, object_info: dict):
+        if not re.match(r"^https?://[^\s/]+(/\S*)?$", endpoint or ""):
+            raise ActionError("请填写 http(s) 地址，例如 http://127.0.0.1:8188")
+        if not isinstance(object_info, dict) or not object_info:
+            raise ActionError("没有读到 ComfyUI 的节点列表")
+        dev = ((stats or {}).get("devices") or [{}])[0]
+        info = {"device": str(dev.get("name", "本机 GPU"))[:80],
+                "vram": round((dev.get("vram_total") or 0) / 2**30, 1),
+                "version": str(((stats or {}).get("system") or {}).get("comfyui_version", ""))[:40],
+                "nodeCount": len(object_info)}
+        self.store.put_raw(OBJINFO_KEY, object_info)
+        p = self.store.provider("local")
+        p.update(connected=True, demo=False, config={"endpoint": endpoint.rstrip("/")})
+        p["comfy"] = {"status": "ready", "progress": 1, "bridge": True, "url": endpoint.rstrip("/"), "info": info}
+        self.bridge_seen = time.monotonic()
+        self.reset_adapter("local")
+        for w in self.s["workflows"]:
+            w["checks"].pop("local", None)
+            if self.s["policy"]["autoDeployModels"]:
+                self.deploy_workflow(w["id"], ["local"])
+        self.touch()
+        return info
+
+    def bridge_poll(self) -> dict:
+        self.bridge_seen = time.monotonic()
+        jobs = []
+        for e in self.bridge.values():
+            if not e["claimed"] and not e["cancel"]:
+                e["claimed"] = True
+                jobs.append({"id": e["id"], "prompt": e["prompt"], "upload": e["upload"]})
+        return {"jobs": jobs, "cancel": [e["id"] for e in self.bridge.values() if e["cancel"]]}
+
+    def bridge_progress(self, jid, value):
+        e = self.bridge.get(jid)
+        if e and not e["future"].done():
+            e["progress"](max(0.0, min(1.0, float(value))))
+
+    def bridge_finish(self, jid, result=None, error=None):
+        e = self.bridge.get(jid)
+        if not e or e["future"].done():
+            raise ActionError("任务不存在或已结束")
+        if error is not None:
+            e["future"].set_exception(AdapterError(str(error)[:500] or "本机 ComfyUI 出错"))
+        else:
+            e["future"].set_result(result)
+
     # ---------- 平台 ----------
     def connect(self, pid, config: dict, demo: bool):
         meta = C.PROVIDER_BY_ID.get(pid)
@@ -73,6 +135,8 @@ class Engine(SchedulerMixin):
             raise ActionError("未知平台")
         if not demo and not meta.get("adapter"):
             raise ActionError(f"{meta['name']} 的真实接入还在开发中，请打开「演示模式」体验")
+        if not demo and pid == "local" and C.PUBLIC:
+            raise ActionError(LOCAL_PUBLIC_MSG)
         p = self.store.provider(pid)
         old = p["config"]
         cfg = {k: (old.get(k, "") if v == MASK else str(v).strip()) for k, v in (config or {}).items()}
@@ -138,9 +202,12 @@ class Engine(SchedulerMixin):
         """连接前的连通性测试，不改状态。"""
         if demo:
             return {"ok": True, "text": "演示模式：不连接真实平台"}
+        if pid == "local" and C.PUBLIC:
+            raise ActionError(LOCAL_PUBLIC_MSG)
         old = self.store.provider(pid)["config"]
         cfg = {k: (old.get(k, "") if v == MASK else v) for k, v in (config or {}).items()}
         ad = make_adapter(pid, {"config": cfg, "comfy": {}, "gpu": self.store.provider(pid)["gpu"]})
+        ad.deploy_dir = self.store.deploy
         try:
             if pid == "vast":
                 inst = await ad._instance()
@@ -163,7 +230,7 @@ class Engine(SchedulerMixin):
     def deploy_comfy(self, ids):
         for pid in ids:
             p = self.store.provider(pid)
-            if p["connected"] and p["comfy"]["status"] in ("none", "error"):
+            if p["connected"] and p["comfy"]["status"] in ("none", "error") and not self.is_bridge(pid):
                 p["comfy"] = {"status": "deploying", "progress": 0, "step": ""}
                 self.spawn(self._deploy_comfy(pid))
         self.touch()
@@ -172,7 +239,8 @@ class Engine(SchedulerMixin):
         packs = set()
         for w in self.s["workflows"] + ([extra_wf] if extra_wf else []):
             packs |= {c["pack"] for c in w["customNodes"] if c["pack"] not in ("未知来源", "comfy-core")}
-        return sorted(packs)
+        # 来自用户上传的工作流：不合法的包名直接丢弃，不会写进部署文件
+        return sorted(p for p in packs if PACK_RE.match(p))
 
     async def _deploy_comfy(self, pid):
         p = self.store.provider(pid)
@@ -374,7 +442,7 @@ class Engine(SchedulerMixin):
     def remove_gallery(self, item_id):
         item = next((g for g in self.s["gallery"] if g["id"] == item_id), None)
         if item and item.get("file"):
-            (C.OUTPUTS / item["file"]).unlink(missing_ok=True)
+            (self.store.outputs / item["file"]).unlink(missing_ok=True)
         self.s["gallery"] = [g for g in self.s["gallery"] if g["id"] != item_id]
         self.touch()
 

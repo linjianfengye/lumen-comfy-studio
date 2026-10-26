@@ -1,5 +1,6 @@
 import { useState } from 'react'
-import { useStore } from '../lib/store.js'
+import { useSession, useStore } from '../lib/store.js'
+import { connectLocalBridge, testLocalBridge } from '../lib/localBridge.js'
 import { PROVIDERS, providerById, LIFECYCLE_LABEL, comfyUiLink } from '../lib/providers.js'
 import { connectProvider, testProvider, disconnectProvider, setGpu, setActiveProvider, setPolicy, startProvider, stopProvider, deployComfy } from '../lib/engine.js'
 import { Modal, Switch, powerInfo, fmtClock, toast } from '../components/ui.jsx'
@@ -245,15 +246,30 @@ function ConnectModal({ id, onClose }) {
   const [test, setTest] = useState(null)
   const [autoDeploy, setAutoDeploy] = useState(true)
   const fields = p.fields.filter((f) => f.key !== 'via')
+  // 在线版：本机 ComfyUI 由浏览器直连，服务器不访问 127.0.0.1
+  const server = useSession().server
+  const bridge = id === 'local' && !demo && !!server?.public
 
   const runTest = async () => {
     setTest({ state: 'loading' })
+    if (bridge) {
+      try { setTest({ state: 'ok', text: await testLocalBridge(cfg.endpoint || '') }) } catch (x) { setTest({ state: 'err', text: x.message }) }
+      return
+    }
     const r = await testProvider(id, cfg, demo)
     setTest(r ? { state: r.ok ? 'ok' : 'err', text: r.text } : null)
   }
 
   const save = async (e) => {
     e.preventDefault()
+    if (bridge) {
+      try {
+        const info = await connectLocalBridge(cfg.endpoint || '')
+        toast(`已连接本机 ComfyUI · ${info.device}`)
+        onClose()
+      } catch (x) { setTest({ state: 'err', text: x.message }) }
+      return
+    }
     const r = await connectProvider(id, cfg, { demo, deploy: autoDeploy })
     if (!r) return
     toast(autoDeploy ? `已连接 ${p.name}，开始部署 ComfyUI` : `已连接 ${p.name}`)
@@ -265,7 +281,7 @@ function ConnectModal({ id, onClose }) {
       <form onSubmit={save} className="form-grid">
         <div>
           <h2 className="h2">连接 {p.name}</h2>
-          <p className="muted" style={{ margin: '6px 0 0' }}>{p.hint || p.desc}</p>
+          <p className="muted" style={{ margin: '6px 0 0' }}>{bridge ? '由浏览器直连你电脑上的 ComfyUI，出图结果自动存进作品库。' : p.hint || p.desc}</p>
         </div>
         <div className="policy-row" style={{ padding: 0, borderTop: 0 }}>
           <div>
@@ -281,7 +297,18 @@ function ConnectModal({ id, onClose }) {
               placeholder={f.placeholder} value={cfg[f.key] || ''} onChange={(e) => setCfg({ ...cfg, [f.key]: e.target.value })} />
           </label>
         ))}
-        {!demo && p.fields.some((f) => f.secret) && <p className="hint">密钥只发给本机的 Lumen 后端，加密保存在 server/data，页面上只显示掩码。</p>}
+        {bridge && (
+          <div className="hint">
+            <p style={{ margin: '0 0 6px' }}>在线版由这个网页直接访问你电脑上的 ComfyUI，服务器不会连你的本机。ComfyUI 需要允许本网站访问，请这样启动：</p>
+            <pre className="code" style={{ margin: 0 }}>{`python main.py --enable-cors-header ${window.location.origin}`}</pre>
+            <p style={{ margin: '6px 0 0' }}>出图时要保持本网页打开；Chrome 首次会询问是否允许访问本地网络，请选允许。Safari 可能不支持。</p>
+          </div>
+        )}
+        {!demo && p.fields.some((f) => f.secret) && (
+          <p className="hint">{server?.public
+            ? '密钥加密保存在服务器上（离线自动开关机需要用到），页面上只显示掩码；服务器运营者在技术上可以解密。'
+            : '密钥只发给本机的 Lumen 后端，加密保存在 server/data，页面上只显示掩码。'}</p>
+        )}
         {!demo && (
           <div>
             <button type="button" className="btn btn-ghost btn-sm" onClick={runTest} disabled={test?.state === 'loading'}>
@@ -290,13 +317,15 @@ function ConnectModal({ id, onClose }) {
             {test?.text && <p className="hint" role="status" style={{ marginTop: 8, color: test.state === 'ok' ? 'var(--green)' : 'var(--red)', wordBreak: 'break-word' }}>{test.text}</p>}
           </div>
         )}
-        <div className="policy-row" style={{ padding: '4px 0 0', borderTop: 0 }}>
-          <div>
-            <div style={{ fontWeight: 500 }}>连接后一键部署 ComfyUI</div>
-            <p className="hint">{p.lifecycle === 'local' ? '检测本机 ComfyUI 并读取节点列表' : id === 'modal' ? '执行 modal deploy：构建镜像、创建模型存储卷、发布 web endpoint' : '检查平台连通性并准备接收任务'}</p>
+        {!bridge && (
+          <div className="policy-row" style={{ padding: '4px 0 0', borderTop: 0 }}>
+            <div>
+              <div style={{ fontWeight: 500 }}>连接后一键部署 ComfyUI</div>
+              <p className="hint">{p.lifecycle === 'local' ? '检测本机 ComfyUI 并读取节点列表' : id === 'modal' ? '执行 modal deploy：构建镜像、创建模型存储卷、发布 web endpoint' : '检查平台连通性并准备接收任务'}</p>
+            </div>
+            <Switch label="连接后一键部署 ComfyUI" checked={autoDeploy} onChange={setAutoDeploy} />
           </div>
-          <Switch label="连接后一键部署 ComfyUI" checked={autoDeploy} onChange={setAutoDeploy} />
-        </div>
+        )}
         <div className="modal-actions" style={{ marginTop: 8 }}>
           <button type="button" className="btn btn-ghost" onClick={onClose}>取消</button>
           <button type="submit" className="btn btn-primary">保存并连接</button>

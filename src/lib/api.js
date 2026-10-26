@@ -1,5 +1,6 @@
 // 与 Lumen 后端通信：REST 操作 + SSE 状态推送。状态以后端为准，前端只渲染。
-import { setState, setStatus } from './store.js'
+import { setSession, setState, setStatus } from './store.js'
+import { startBridge, stopBridge } from './localBridge.js'
 import { toast } from '../components/ui.jsx'
 
 export class ApiError extends Error {}
@@ -54,12 +55,21 @@ export async function connect() {
   clearTimeout(retry)
   source?.close()
   try {
+    const health = await api('/health')
+    setSession({ server: health })
+    if (health.setup) {
+      setStatus('setup')
+      return
+    }
+    const { user } = await api('/me')
+    setSession({ user })
     setState(await api('/state'))
   } catch (e) {
     if (e.message !== '需要登录') retry = setTimeout(connect, 3000)
     return
   }
   setStatus('ready')
+  startBridge()
   source = new EventSource('/api/events')
   source.addEventListener('state', (ev) => { setState(JSON.parse(ev.data)); setStatus('ready') })
   source.addEventListener('notice', (ev) => toast(JSON.parse(ev.data)))
@@ -71,7 +81,23 @@ export async function connect() {
   }
 }
 
-export async function login(token) {
-  await api('/login', { method: 'POST', body: { token } })
+export async function login(username, password) {
+  await api('/login', { method: 'POST', body: { username, password } })
   await connect()
+}
+
+// 第一次启动：创建管理员（公开部署需要初始化口令）
+export async function setup(username, password, setupCode) {
+  await api('/setup', { method: 'POST', body: { username, password, setupCode } })
+  await connect()
+}
+
+export async function logout() {
+  stopBridge()
+  source?.close()
+  clearTimeout(retry)
+  await api('/logout', { method: 'POST' }).catch(() => {})
+  setSession({ user: null })
+  setState(null)
+  setStatus('auth')
 }

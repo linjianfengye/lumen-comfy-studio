@@ -10,6 +10,7 @@ import os
 import sqlite3
 import time
 from datetime import date
+from pathlib import Path
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -73,6 +74,11 @@ def initial_state() -> dict:
 
 class Store:
     def __init__(self, path=C.DB_PATH):
+        # 每个账号一个目录：lumen.db + outputs/ uploads/ deploy/；加密密钥全局一份（C.KEY_PATH）
+        root = Path(path).parent
+        self.outputs, self.uploads, self.deploy = root / "outputs", root / "uploads", root / "deploy"
+        for d in (self.outputs, self.uploads, self.deploy):
+            d.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.execute("CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS raw (id TEXT PRIMARY KEY, value TEXT NOT NULL)")

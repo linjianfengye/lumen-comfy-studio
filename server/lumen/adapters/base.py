@@ -29,6 +29,8 @@ class JobSpec:
 class Adapter:
     """生命周期：deploy（部署 ComfyUI）→ start（开机/预热）→ run_job → stop（关机）。"""
 
+    deploy_dir = C.DEPLOY   # Engine 会改成该账号自己的目录
+
     def __init__(self, pid: str, provider: dict):
         self.pid = pid
         self.meta = C.PROVIDER_BY_ID[pid]

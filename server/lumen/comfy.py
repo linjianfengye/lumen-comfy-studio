@@ -10,7 +10,9 @@ import uuid
 
 import httpx
 
-NON_EXEC = {"Note", "MarkdownNote", "Reroute", "PrimitiveNode"}
+from . import netguard
+
+NON_EXEC ={"Note", "MarkdownNote", "Reroute", "PrimitiveNode"}
 CONTROL_WORDS = {"fixed", "increment", "decrement", "randomize"}
 WIDGET_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"}
 VIDEO_EXT = re.compile(r"\.(mp4|webm|mov|mkv)$", re.I)
@@ -37,7 +39,8 @@ def _err_text(res: httpx.Response) -> str:
 class ComfyClient:
     def __init__(self, base: str, headers: dict | None = None, transport: httpx.AsyncBaseTransport | None = None):
         self.base = base.rstrip("/")
-        self.http = httpx.AsyncClient(base_url=self.base, headers=headers or {}, timeout=30, transport=transport, follow_redirects=True)
+        self.http = httpx.AsyncClient(base_url=self.base, headers=headers or {}, timeout=30,
+                                      transport=netguard.transport(transport), follow_redirects=True)
         self._info = None
 
     async def close(self):

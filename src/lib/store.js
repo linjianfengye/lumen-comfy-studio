@@ -2,7 +2,9 @@
 import { useSyncExternalStore } from 'react'
 
 let state = null
-let status = 'connecting' // connecting | ready | offline | auth
+let status = 'connecting' // connecting | ready | offline | auth | setup
+// 当前账号与服务器信息：{ user: {id, username, role}, server: {public, setupCode} }
+let session = { user: null, server: null }
 const listeners = new Set()
 const emit = () => listeners.forEach((l) => l())
 const subscribe = (l) => (listeners.add(l), () => listeners.delete(l))
@@ -20,6 +22,14 @@ export function setStatus(next) {
 }
 
 export const getState = () => state
+
+export function setSession(patch) {
+  session = { ...session, ...patch }
+  emit()
+}
+
+export const getSession = () => session
+export const useSession = () => useSyncExternalStore(subscribe, () => session)
 
 // App 在 state 就绪前不渲染页面，所以页面里的 selector 可以假定 state 存在
 export function useStore(selector = (s) => s) {

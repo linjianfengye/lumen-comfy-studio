@@ -13,7 +13,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .. import config as C
 from ..comfy import ComfyError
 from .base import AdapterError, ComfyAdapter
 
@@ -23,6 +22,12 @@ COMFY_CLI = os.environ.get("LUMEN_COMFY_CLI", "1.23.0")
 COMFY_VERSION = os.environ.get("LUMEN_COMFY_VERSION", "0.42.5")
 APP_NAME = "lumen-comfyui"
 GPU_NAME = {"A100-40G": "A100-40GB", "A100-80G": "A100-80GB"}
+PACK_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")   # Comfy Registry 的 cnr_id
+GPU_RE = re.compile(r"^[A-Za-z0-9-]{1,20}$")
+ENV_KEEP = {"PATH", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "COMSPEC", "PATHEXT", "TEMP", "TMP", "TMPDIR",
+            "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG", "LC_ALL", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE",
+            "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+ENV_KEEP = {k.upper() for k in ENV_KEEP}
 URL_RE = re.compile(r"https://[\w.-]+\.modal\.run\S*")
 STEP_HINTS = [("Building image", 0.15, "构建 ComfyUI 镜像"), ("Creating objects", 0.6, "创建模型存储卷"),
               ("Created", 0.75, "发布 HTTP 接口"), ("App deployed", 0.85, "健康检查")]
@@ -33,20 +38,32 @@ class ModalAdapter(ComfyAdapter):
         return (self.comfy.get("url") or self.cfg.get("endpoint") or "").strip().rstrip("/")
 
     def _env(self) -> dict:
-        env = {**os.environ, "PYTHONIOENCODING": "utf-8", "NO_COLOR": "1", "TERM": "dumb"}
+        # 只传最小环境：不把服务器自己的变量（LUMEN_TOKEN、平台注入的 BIGAPPLE_* 等）带进子进程
+        env = {k: v for k, v in os.environ.items() if k.upper() in ENV_KEEP}
+        env.update(PYTHONIOENCODING="utf-8", NO_COLOR="1", TERM="dumb",
+                   # 指向该账号目录下不存在的配置文件，避免回落到服务器上的 ~/.modal.toml
+                   MODAL_CONFIG_PATH=str(self.deploy_dir / ".modal.toml"))
         if self.cfg.get("tokenId") and self.cfg.get("tokenSecret"):
             env.update(MODAL_TOKEN_ID=self.cfg["tokenId"], MODAL_TOKEN_SECRET=self.cfg["tokenSecret"])
         env["HF_TOKEN"] = self.cfg.get("hfToken") or ""
         return env
 
     def render(self, node_packs=(), idle_minutes=5) -> Path:
+        # 渲染出的文件会在本服务器上被 modal CLI 导入执行，所有写进去的值都必须是白名单字符
+        bad = [p for p in node_packs if not PACK_RE.match(p)]
+        if bad:
+            raise AdapterError(f"节点包名不合法：{', '.join(bad)[:120]}")
+        if not GPU_RE.match(str(self.gpu or "")):
+            raise AdapterError("GPU 型号不合法")
         cfg = {
             "appName": APP_NAME, "volumeName": f"{APP_NAME}-models", "gpu": GPU_NAME.get(self.gpu, self.gpu),
             "scaledownWindow": max(60, min(3600, int(idle_minutes * 60))), "nodePacks": sorted(set(node_packs)),
             "comfyCli": COMFY_CLI, "comfyVersion": COMFY_VERSION,
         }
-        out = C.DEPLOY / "modal_comfyui.py"
-        out.write_text(TEMPLATE.read_text(encoding="utf-8").replace("__CONFIG__", json.dumps(cfg)), encoding="utf-8")
+        out = self.deploy_dir / "modal_comfyui.py"
+        # 模板里是 r'''__CONFIG__'''：单引号只会出现在 JSON 字符串里，换成 ' 后任何值都无法跳出
+        blob = json.dumps(cfg, ensure_ascii=True).replace("'", "\\u0027")
+        out.write_text(TEMPLATE.read_text(encoding="utf-8").replace("__CONFIG__", blob), encoding="utf-8")
         return out
 
     async def _run(self, args, on_line, timeout=3600) -> tuple[int, str]:
@@ -76,7 +93,7 @@ class ModalAdapter(ComfyAdapter):
         loop = asyncio.get_running_loop()
 
         def work():
-            p = subprocess.Popen([sys.executable, *args], cwd=C.DEPLOY, env=self._env(),
+            p = subprocess.Popen([sys.executable, *args], cwd=self.deploy_dir, env=self._env(),
                                  stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace")
             tail = []
             for line in p.stdout:
@@ -178,7 +195,7 @@ class ModalAdapter(ComfyAdapter):
             raise AdapterError("未填写 Modal Token，无法向存储卷下载模型；请把模型放进你自己部署的 ComfyUI")
         if not model.get("source"):
             raise AdapterError("没有下载地址，请在工作流页为该模型填写下载链接")
-        path = C.DEPLOY / "modal_comfyui.py"
+        path = self.deploy_dir / "modal_comfyui.py"
         if not path.exists():
             self.render(self.comfy.get("nodePacks") or [], self.comfy.get("scaledownMinutes") or 5)
 

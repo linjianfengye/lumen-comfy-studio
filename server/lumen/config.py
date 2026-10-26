@@ -18,7 +18,13 @@ PORT = int(os.environ.get("LUMEN_PORT", "8787"))
 # 设置后所有 /api 请求都要带 Authorization: Bearer <token>；对局域网 / 公网开放时必须设置
 TOKEN = os.environ.get("LUMEN_TOKEN", "")
 
-USD_TO_CNY = float(os.environ.get("LUMEN_USD_CNY", "7.2"))
+# 公开部署（监听非本机地址）：多账号；服务器不访问用户填的本机 / 内网 ComfyUI，改由浏览器直连
+PUBLIC = os.environ.get("LUMEN_PUBLIC", "1" if HOST not in ("127.0.0.1", "localhost", "::1") else "0") == "1"
+USERS = DATA / "users"
+ACCOUNTS_DB = DATA / "accounts.db"
+GALLERY_LIMIT = int(os.environ.get("LUMEN_GALLERY_LIMIT", "500"))
+
+USD_TO_CNY =float(os.environ.get("LUMEN_USD_CNY", "7.2"))
 DEMO_TIME_SCALE = 10      # 演示平台的空闲倒计时倍速
 TICK_SECONDS = 1.0
 

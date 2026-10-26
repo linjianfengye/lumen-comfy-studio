@@ -11,6 +11,7 @@ import time
 
 import httpx
 
+from .. import netguard
 from .base import AdapterError, Adapter
 from ..comfy import default_graph, inject_params
 from ..workflow import is_api
@@ -92,7 +93,8 @@ class RunPodAdapter(Adapter):
         f = imgs[0]
         ext = "." + (f.get("filename", "out.png").rsplit(".", 1)[-1].lower())
         if f.get("type") == "s3_url" or str(f.get("data", "")).startswith("http"):
-            async with httpx.AsyncClient(timeout=300) as h:
+            # 结果链接来自用户自己的 worker，公开部署时只允许公网地址
+            async with httpx.AsyncClient(timeout=300, transport=netguard.transport()) as h:
                 data = (await h.get(f["data"])).content
         else:
             data = base64.b64decode(f["data"].split(",", 1)[-1])

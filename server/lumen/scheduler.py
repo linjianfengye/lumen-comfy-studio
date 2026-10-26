@@ -14,6 +14,8 @@ class SchedulerMixin:
     def _next_job(self, pid):
         if not self.comfy_ready(pid):
             return None
+        if self.is_bridge(pid) and not self.bridge_online():
+            return None   # 网页关着：任务留在队列里，打开网页后继续
         for b in reversed(self.s["batches"]):
             if b["status"] != "active":
                 continue
@@ -85,7 +87,7 @@ class SchedulerMixin:
     def _job_spec(self, b, j, wf) -> JobSpec:
         w, _, h = (b.get("size") or "").partition("x")
         v = b.get("video") or {}
-        ff = C.UPLOADS / b["firstFrameId"] if b.get("firstFrameId") else None
+        ff = self.store.uploads / b["firstFrameId"] if b.get("firstFrameId") else None
         return JobSpec(kind=b["kind"], prompt=j["prompt"], seed=j["seed"], raw=self.store.get_raw(wf["id"]) if wf else None,
                        negative=b.get("negative", ""), width=int(w) if w.isdigit() else None, height=int(h) if h.isdigit() else None,
                        frames=v.get("frames"), fps=v.get("fps"), first_frame=ff if ff and ff.exists() else None)
@@ -113,12 +115,13 @@ class SchedulerMixin:
                     "seconds": round(res.get("seconds") or time.monotonic() - t0, 1), "createdAt": now_ms(), "batchId": b["id"]}
             if "data" in res:
                 item["file"] = f"{item_id}{res['ext']}"
-                (C.OUTPUTS / item["file"]).write_bytes(res["data"])
+                (self.store.outputs / item["file"]).write_bytes(res["data"])
                 item.update(src=f"/api/files/{item['file']}", real=True)
             else:
                 item.update(src=res["src"], real=False)
             j.update(status="done", progress=1, seconds=item["seconds"], resultId=item_id)
             self.s["gallery"].insert(0, item)
+            self._cap_gallery()
             if b.get("compare") and len(b["jobs"]) >= 2 and all(x["status"] == "done" for x in b["jobs"]):
                 self.s["compare"] = {"a": b["jobs"][0]["resultId"], "b": b["jobs"][1]["resultId"]}
                 self.notice("对比图已生成，可到「色彩对比」查看")
@@ -134,6 +137,17 @@ class SchedulerMixin:
             if cur and cur["jobId"] == job_id:
                 self.s["runtime"][pid]["current"] = None
             self.touch()
+
+    def _cap_gallery(self):
+        """每个账号最多保留 GALLERY_LIMIT 个作品（不含示例），超出时删掉最旧的文件。"""
+        own = [g for g in self.s["gallery"] if not g.get("sample")]
+        if len(own) <= C.GALLERY_LIMIT:
+            return
+        drop = {g["id"] for g in own[C.GALLERY_LIMIT:]}
+        for g in own[C.GALLERY_LIMIT:]:
+            if g.get("file"):
+                (self.store.outputs / g["file"]).unlink(missing_ok=True)
+        self.s["gallery"] = [g for g in self.s["gallery"] if g["id"] not in drop]
 
     def _tick_provider(self, pid, dt):
         rt = self.s["runtime"][pid]
