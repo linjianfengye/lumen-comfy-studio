@@ -4,7 +4,12 @@ import { toast } from '../components/ui.jsx'
 
 export class ApiError extends Error {}
 
+// 静态展示版（npm run build:showcase）：没有后端，读一份预置的状态快照，操作只提示
+export const SHOWCASE = import.meta.env.VITE_SHOWCASE === '1'
+const SHOWCASE_MSG = '这是在线展示版，连接平台、出图等操作需要在本机运行完整版（npm run server + npm run dev）'
+
 export async function api(path, { method = 'GET', body, form } = {}) {
+  if (SHOWCASE) throw new ApiError(SHOWCASE_MSG)
   let res
   try {
     res = await fetch('/api' + path, {
@@ -40,6 +45,12 @@ let source = null
 let retry = null
 
 export async function connect() {
+  if (SHOWCASE) {
+    const res = await fetch('/showcase-state.json')
+    setState(await res.json())
+    setStatus('ready')
+    return
+  }
   clearTimeout(retry)
   source?.close()
   try {

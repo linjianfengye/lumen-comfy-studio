@@ -5,3 +5,4 @@ server/.venv/
 server/data/
 __pycache__/
 .pytest_cache/
+dist-showcase/

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useStatus, useStore } from './lib/store.js'
-import { connect, login } from './lib/api.js'
+import { connect, login, SHOWCASE } from './lib/api.js'
 import { providerById } from './lib/providers.js'
 import { powerInfo, Toaster } from './components/ui.jsx'
 import Home from './pages/Home.jsx'
@@ -120,6 +120,7 @@ export default function App() {
           </div>
           {ready && <GpuPill />}
           {ready && status === 'offline' && <span className="chip red" role="status">后端已断开，重连中</span>}
+          {SHOWCASE && <span className="chip blue" title="在线展示版：数据为预置快照，操作不会执行">展示版</span>}
         </nav>
       </header>
       <main key={current.path} className="page">
